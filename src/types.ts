@@ -4,9 +4,9 @@ import type { z } from "zod";
 export type { Operation };
 
 /**
- * Schemas accepted by SmartObject: plain objects or discriminated unions of objects.
+ * Schemas accepted by SmartObject: plain objects or unions of objects at root.
  */
-export type SmartObjectSchema = z.ZodObject | z.ZodDiscriminatedUnion;
+export type SmartObjectSchema = z.ZodObject | z.ZodDiscriminatedUnion | z.ZodUnion;
 
 /**
  * Compile-time map of `set*` methods for each schema key.
@@ -24,7 +24,7 @@ export type SetMethods<T> = {
 export type AllKeys<T> = T extends unknown ? keyof T : never;
 
 /**
- * `set*` methods for discriminated-union root schemas.
+ * `set*` methods for union root schemas.
  *
  * Each setter accepts the union of value types for that key across variants.
  */
@@ -48,7 +48,7 @@ export type OperationsAccessor = {
 };
 
 /**
- * Flattened data shape for discriminated unions — exposes all variant keys on one surface.
+ * Flattened data shape for union roots — exposes all variant keys on one surface.
  */
 export type UnionDataShape<U> = {
   [K in AllKeys<U>]: U extends unknown ? (K extends keyof U ? U[K] : never) : never;
@@ -59,9 +59,9 @@ export type UnionDataShape<U> = {
  *
  * Intersection types merge these concerns into one consumable surface for callers.
  */
-export type SmartObjectInstance<T extends SmartObjectSchema> = (T extends z.ZodDiscriminatedUnion
-  ? UnionDataShape<z.infer<T>>
-  : z.infer<T>) &
+export type SmartObjectInstance<T extends SmartObjectSchema> = (T extends z.ZodObject
+  ? z.infer<T>
+  : UnionDataShape<z.infer<T>>) &
   (T extends z.ZodObject ? SetMethods<z.infer<T>> : SetMethodsUnion<z.infer<T>>) &
   OperationsAccessor;
 

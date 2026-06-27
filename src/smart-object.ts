@@ -6,6 +6,7 @@ import type { SmartObjectConstructor, SmartObjectInstance, SmartObjectSchema } f
 const { applyPatch, compare, deepClone } = jsonPatch;
 
 type ZodObjectLike = z.ZodObject;
+type ZodUnionRootLike = z.ZodUnion;
 type ZodDiscriminatedUnionLike = z.ZodDiscriminatedUnion;
 
 function isZodObject(schema: unknown): schema is ZodObjectLike {
@@ -17,15 +18,23 @@ function isZodObject(schema: unknown): schema is ZodObjectLike {
   );
 }
 
-function isZodDiscriminatedUnion(schema: SmartObjectSchema): schema is ZodDiscriminatedUnionLike {
-  return schema._zod.def.type === "union" && "discriminator" in schema._zod.def;
+function isZodUnionRoot(schema: SmartObjectSchema): schema is ZodUnionRootLike {
+  return schema._zod.def.type === "union";
+}
+
+function isZodDiscriminatedUnion(schema: ZodUnionRootLike): schema is ZodDiscriminatedUnionLike {
+  return "discriminator" in schema._zod.def;
+}
+
+function isZodUnionOfObjects(schema: ZodUnionRootLike): boolean {
+  return schema.options.length > 0 && schema.options.every(isZodObject);
 }
 
 function getObjectShapeKeys(schema: ZodObjectLike): string[] {
   return Object.keys(schema.shape);
 }
 
-function getDiscriminatedUnionKeys(schema: ZodDiscriminatedUnionLike): string[] {
+function getUnionObjectKeys(schema: ZodUnionRootLike): string[] {
   const keys = new Set<string>();
 
   for (const option of schema.options) {
@@ -45,7 +54,7 @@ function buildSmartObjectClass<T extends SmartObjectSchema>(zodSchema: T) {
   type Output = z.infer<T>;
   const keys = isZodObject(zodSchema)
     ? getObjectShapeKeys(zodSchema)
-    : getDiscriminatedUnionKeys(zodSchema);
+    : getUnionObjectKeys(zodSchema);
 
   class SmartObjectClass {
     #data!: Output;
@@ -118,9 +127,12 @@ function buildSmartObjectClass<T extends SmartObjectSchema>(zodSchema: T) {
       };
     }
 
-    #getActiveVariantObject(schema: ZodDiscriminatedUnionLike): ZodObjectLike | undefined {
+    #getActiveVariantViaDiscriminator(
+      schema: ZodDiscriminatedUnionLike,
+      data: Output,
+    ): ZodObjectLike | undefined {
       const discriminator = schema._zod.def.discriminator as string;
-      const tag = (this.#data as Record<string, unknown>)[discriminator];
+      const tag = (data as Record<string, unknown>)[discriminator];
 
       for (const option of schema.options) {
         if (!isZodObject(option)) {
@@ -136,15 +148,38 @@ function buildSmartObjectClass<T extends SmartObjectSchema>(zodSchema: T) {
       return undefined;
     }
 
-    #createUnionFieldSetter(
-      schema: ZodDiscriminatedUnionLike,
-      key: string,
-    ): (value: unknown) => void {
-      return (value: unknown) => {
-        const activeVariant = this.#getActiveVariantObject(schema);
-        if (!activeVariant || !(key in activeVariant.shape)) {
-          throw new Error(`Cannot set "${key}" on the active discriminated-union variant`);
+    #getMatchingVariantObjects(schema: ZodUnionRootLike): ZodObjectLike[] {
+      if (isZodDiscriminatedUnion(schema)) {
+        const activeVariant = this.#getActiveVariantViaDiscriminator(schema, this.#data);
+        return activeVariant ? [activeVariant] : [];
+      }
+
+      return schema.options
+        .filter(isZodObject)
+        .filter((option) => option.safeParse(this.#data).success);
+    }
+
+    #assertKeyAllowedOnMatchingVariants(matchingVariants: ZodObjectLike[], key: string): void {
+      if (matchingVariants.length === 0) {
+        throw new Error("Cannot set field on invalid union state");
+      }
+
+      if (matchingVariants.length === 1) {
+        if (!(key in matchingVariants[0].shape)) {
+          throw new Error(`Cannot set "${key}" on the active union variant`);
         }
+        return;
+      }
+
+      if (!matchingVariants.some((variant) => key in variant.shape)) {
+        throw new Error(`Cannot set "${key}" on the active union variant`);
+      }
+    }
+
+    #createUnionFieldSetter(schema: ZodUnionRootLike, key: string): (value: unknown) => void {
+      return (value: unknown) => {
+        const matchingVariants = this.#getMatchingVariantObjects(schema);
+        this.#assertKeyAllowedOnMatchingVariants(matchingVariants, key);
 
         const beforeData = deepClone(this.#data) as object;
         const candidate = { ...deepClone(this.#data), [key]: value };
@@ -177,8 +212,8 @@ function buildSmartObjectClass<T extends SmartObjectSchema>(zodSchema: T) {
  * Initial construction does not emit operations because that state is the baseline
  * every subsequent patch is measured against.
  *
- * @typeParam T - Zod object or discriminated-union schema that defines the instance shape
- * @param zodSchema - A `z.object({ ... })` or `z.discriminatedUnion(...)` describing the fields
+ * @typeParam T - Zod object or union-of-objects schema that defines the instance shape
+ * @param zodSchema - A `z.object({ ... })`, `z.union([...])`, or `z.discriminatedUnion(...)` schema
  * @returns An instantiable class with types inferred from the schema
  *
  * @example
@@ -198,12 +233,23 @@ export function SmartObject<T extends z.ZodObject>(zodSchema: T): SmartObjectCon
 export function SmartObject<T extends z.ZodDiscriminatedUnion>(
   zodSchema: T,
 ): SmartObjectConstructor<T>;
+export function SmartObject<T extends z.ZodUnion>(zodSchema: T): SmartObjectConstructor<T>;
 export function SmartObject(
   zodSchema: SmartObjectSchema,
 ): SmartObjectConstructor<SmartObjectSchema> {
-  if (!isZodObject(zodSchema) && !isZodDiscriminatedUnion(zodSchema)) {
-    throw new TypeError("SmartObject requires a z.object(...) or z.discriminatedUnion(...) schema");
+  if (isZodObject(zodSchema)) {
+    return buildSmartObjectClass(zodSchema);
   }
 
-  return buildSmartObjectClass(zodSchema);
+  if (isZodUnionRoot(zodSchema)) {
+    if (!isZodUnionOfObjects(zodSchema)) {
+      throw new TypeError("SmartObject union root requires all options to be z.object(...)");
+    }
+
+    return buildSmartObjectClass(zodSchema);
+  }
+
+  throw new TypeError(
+    "SmartObject requires a z.object(...), z.union([...]), or z.discriminatedUnion(...) schema",
+  );
 }
