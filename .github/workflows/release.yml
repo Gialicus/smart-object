@@ -15,7 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No registry-url: avoids .npmrc with always-auth that interferes with OIDC
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -29,8 +28,11 @@ jobs:
       - run: npm run build
       - run: npm run typecheck
 
-      # OIDC trusted publishing is tried first (configure on npmjs.com: workflow release.yml).
-      # NPM_TOKEN is the fallback if trusted publishing is not configured yet.
-      - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # OIDC trusted publishing: requires npm >= 11.5.1 and configuration on npmjs.com
+      # (Package settings → Trusted publishing → repo gialicus/smart-object, workflow release.yml)
+      # Do NOT set NODE_AUTH_TOKEN — even an empty value blocks OIDC.
+      - name: Publish to npm
+        run: |
+          unset NODE_AUTH_TOKEN
+          unset NPM_CONFIG_USERCONFIG
+          npm publish --access public
