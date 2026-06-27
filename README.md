@@ -23,7 +23,7 @@ const Person = SmartObject(z.object({
 
 const person = new Person({ name: "Mario", age: 30 });
 
-// Reads expose validated state without side effects
+// Reads expose validated state
 console.log(person.name); // "Mario"
 
 // Writes validate first, then append patches to person.operations
@@ -40,6 +40,9 @@ person.setName("Luigi"); // Unchanged value — no operation added (keeps sync p
 
 person.clearOperations(); // Drops the audit trail after persist/sync; state is unchanged
 
+// Snapshot for serialization — deep clone, safe for JSON.stringify
+console.log(person.toJSON());
+
 // Initial construction is the replay baseline — it never emits operations
 console.log(new Person({ name: "Mario", age: 30 }).operations); // []
 
@@ -48,37 +51,66 @@ const initial = { name: "Mario", age: 30 };
 const person2 = Person.fromOperations(initial, [...person.operations]);
 ```
 
+### Union root schemas
+
+`SmartObject` also accepts `z.discriminatedUnion(...)` and `z.union([...])` when every option is a `z.object(...)`:
+
+```typescript
+const Event = SmartObject(z.discriminatedUnion("type", [
+    z.object({ type: z.literal("click"), x: z.number(), y: z.number() }),
+    z.object({ type: z.literal("scroll"), delta: z.number() }),
+]));
+
+const event = new Event({ type: "click", x: 10, y: 20 });
+event.setX(15);
+```
+
+See [`examples/event.ts`](examples/event.ts) and [`examples/profile.ts`](examples/profile.ts) for full demos.
+
+Object and array getters always return deep clones — in-place mutation does not affect internal state or the operation log. Only `set*` methods generate RFC 6902 operations.
+
 ## API
 
 ### `SmartObject(schema)`
 
-Factory that accepts a `z.object(...)` and returns an instantiable class.
+Factory that accepts a Zod schema and returns an instantiable class.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `schema` | `z.ZodObject` | Zod schema defining the object shape |
+| `schema` | `z.ZodObject` \| `z.ZodUnion` \| `z.ZodDiscriminatedUnion` | Zod schema defining the object shape |
 
 **Members generated for each schema field `foo`:**
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `foo` | getter | Exposes the current validated field value |
+| `foo` | getter | Exposes the current validated field value (deep clone for objects and arrays) |
 | `setFoo(value)` | `(value: T) => void` | Validates, updates state, and records patches only when the value actually changes |
+
+`set*` method names follow camelCase with the field name capitalized (`name` → `setName`, `userId` → `setUserId`).
 
 **Instance members:**
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `operations` | `readonly Operation[]` | Chronological RFC 6902 patch log |
+| `operations` | `readonly Operation[]` | Chronological RFC 6902 patch log (defensive copy) |
 | `clearOperations()` | `() => void` | Clears the patch log without rolling back state |
-
-`set*` method names follow camelCase with the field name capitalized (`name` → `setName`, `address` → `setAddress`).
+| `toJSON()` | `() => T` | Deep clone of current state, safe for `JSON.stringify` |
 
 **Static members:**
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `fromOperations(initial, operations)` | `(initial, Operation[]) => Instance` | Builds an instance from a baseline, replays operations, and copies them into the accumulator |
+| `fromOperations(initial, operations)` | `(initial, Operation[]) => Instance` | Builds an instance from a baseline, replays and validates operations, and copies them into the accumulator |
+
+### `SmartObjectError`
+
+Structured error thrown on validation failures, invalid union field access, and failed replay:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `code` | `"InvalidValue"` \| `"InvalidUnionField"` \| `"InvalidReplay"` \| `"UnsupportedSchema"` | Error category |
+| `field` | `string` \| `undefined` | Schema field path when applicable |
+| `cause` | `unknown` | Original error (e.g. `ZodError`) |
 
 ### `Operation`
 
@@ -93,8 +125,19 @@ RFC 6902 operation emitted by [fast-json-patch](https://github.com/Starcounter-J
 
 - `Operation` — JSON Patch operation (re-export from `fast-json-patch`)
 - `SetMethods<T>` — mapped type of inferred `set*` methods for shape `T`
+- `SetMethodsUnion<T>` — `set*` methods for union root schemas
+- `AllKeys<T>` — all keys across union members
+- `UnionDataShape<U>` — flattened data shape for union roots
 - `OperationsAccessor` — `operations` and `clearOperations()`
+- `SnapshotAccessor<T>` — `toJSON()`
 - `SmartObjectConstructor<T>` — constructor type including `fromOperations`
+- `SmartObjectInstance<T>` — full instance type (getters + set* + operations + toJSON)
+
+## Limitations
+
+- **Partial variant switch** — Changing a discriminated union discriminator alone (e.g. `setType("scroll")` without providing `delta`) is not supported and throws `SmartObjectError`.
+- **Union field on wrong variant** — Setting a field that does not exist on the active variant throws `SmartObjectError`.
+- **JSON-only values** — RFC 6902 patches work on JSON-serializable data. `Date`, `Map`, and other non-JSON types are not supported.
 
 ## Design rationale
 
@@ -103,25 +146,60 @@ RFC 6902 operation emitted by [fast-json-patch](https://github.com/Starcounter-J
 3. **No-op writes** — Identical values are skipped to keep the patch log minimal and suitable for network sync.
 4. **Patch-based updates** — Changes are expressed as RFC 6902 operations so deltas are standard, composable, and replayable.
 5. **Operation accumulation** — Patches from `compare` are appended in order, preserving causality for audit and replay.
-6. **Replay** — `fromOperations(initial, operations)` requires the same baseline used when the operations were produced, enabling deterministic reconstruction on another client or after persistence.
+6. **Replay** — `fromOperations(initial, operations)` replays patches, re-validates with Zod, and requires the same baseline used when the operations were produced.
 
-- `SmartObjectInstance<T>` — full instance type (getters + set* + operations)
+## Examples
 
-## Full example
-
-See [`examples/person.ts`](examples/person.ts) for a demo with primitives, nested objects, and arrays.
+- [`examples/person.ts`](examples/person.ts) — primitives, nested objects, and arrays
+- [`examples/event.ts`](examples/event.ts) — discriminated union root
+- [`examples/profile.ts`](examples/profile.ts) — generic union root
 
 ## Project structure
 
 ```
 smart-object/
 ├── src/
-│   ├── index.ts          # Public API barrel export
-│   ├── smart-object.ts   # SmartObject factory
-│   └── types.ts          # Operation and inferred types
+│   ├── index.ts              # Public API barrel export
+│   ├── types.ts              # Operation and inferred types
+│   ├── errors.ts             # SmartObjectError
+│   ├── zod-introspect.ts     # Zod schema introspection
+│   └── smart-object/
+│       ├── index.ts          # Re-export SmartObject
+│       ├── factory.ts        # Public SmartObject() factory
+│       ├── build-class.ts    # Class generation orchestration
+│       ├── instance-state.ts # WeakMap-backed instance storage
+│       ├── read-field.ts     # Defensive getter reads
+│       ├── json-patch.ts     # fast-json-patch wrapper
+│       ├── apply-operations.ts # Replay and rollback
+│       ├── union-variant.ts  # Union variant matching
+│       ├── define-prototype.ts # Getter/setter prototype setup
+│       └── setters/
+│           ├── object-field.ts
+│           └── union-field.ts
 ├── examples/
-│   └── person.ts         # Usage demo
+│   ├── person.ts
+│   ├── event.ts
+│   └── profile.ts
 ├── tests/
-│   └── smart-object.test.ts
-└── dist/                 # Build output (generated)
+│   ├── fixtures/
+│   │   ├── person.ts
+│   │   ├── entity.ts
+│   │   ├── event.ts
+│   │   └── profile.ts
+│   ├── smart-object/
+│   │   ├── construction.test.ts
+│   │   ├── getters.test.ts
+│   │   ├── setters.test.ts
+│   │   ├── clear-operations.test.ts
+│   │   ├── from-operations.test.ts
+│   │   ├── union-fields.test.ts
+│   │   ├── discriminated-union-root.test.ts
+│   │   ├── generic-union-root.test.ts
+│   │   ├── robustness.test.ts
+│   │   ├── setter-naming.test.ts
+│   │   ├── to-json.test.ts
+│   │   ├── schema-variants.test.ts
+│   │   └── types.test.ts
+│   └── zod-introspect.test.ts
+└── dist/                     # Build output (generated)
 ```

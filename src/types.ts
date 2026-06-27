@@ -48,6 +48,13 @@ export type OperationsAccessor = {
 };
 
 /**
+ * Snapshot serialization — returns a deep clone safe for JSON.stringify.
+ */
+export type SnapshotAccessor<T extends SmartObjectSchema> = {
+  toJSON(): z.infer<T>;
+};
+
+/**
  * Flattened data shape for union roots — exposes all variant keys on one surface.
  */
 export type UnionDataShape<U> = {
@@ -63,7 +70,8 @@ export type SmartObjectInstance<T extends SmartObjectSchema> = (T extends z.ZodO
   ? z.infer<T>
   : UnionDataShape<z.infer<T>>) &
   (T extends z.ZodObject ? SetMethods<z.infer<T>> : SetMethodsUnion<z.infer<T>>) &
-  OperationsAccessor;
+  OperationsAccessor &
+  SnapshotAccessor<T>;
 
 /**
  * Constructor type for a SmartObject class, including replay as a first-class capability.
