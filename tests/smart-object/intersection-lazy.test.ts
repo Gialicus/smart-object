@@ -21,11 +21,12 @@ describe("SmartObject intersection and lazy roots", () => {
       children: Node[];
     }
 
-    const nodeSchema: z.ZodType<Node> = z.lazy(() =>
-      z.object({
-        value: z.number(),
-        children: z.array(nodeSchema),
-      }),
+    const nodeSchema = z.lazy(
+      (): z.ZodType<Node> =>
+        z.object({
+          value: z.number(),
+          children: z.array(nodeSchema),
+        }),
     );
 
     const NodeModel = SmartObject(nodeSchema);
