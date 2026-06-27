@@ -1,9 +1,168 @@
 import type { Operation } from "fast-json-patch";
 import jsonPatch from "fast-json-patch";
 import type { z } from "zod";
-import type { SmartObjectConstructor, SmartObjectInstance } from "./types.js";
+import type { SmartObjectConstructor, SmartObjectInstance, SmartObjectSchema } from "./types.js";
 
 const { applyPatch, compare, deepClone } = jsonPatch;
+
+type ZodObjectLike = z.ZodObject;
+type ZodDiscriminatedUnionLike = z.ZodDiscriminatedUnion;
+
+function isZodObject(schema: unknown): schema is ZodObjectLike {
+  return (
+    typeof schema === "object" &&
+    schema !== null &&
+    "_zod" in schema &&
+    (schema as z.ZodType)._zod.def.type === "object"
+  );
+}
+
+function isZodDiscriminatedUnion(schema: SmartObjectSchema): schema is ZodDiscriminatedUnionLike {
+  return schema._zod.def.type === "union" && "discriminator" in schema._zod.def;
+}
+
+function getObjectShapeKeys(schema: ZodObjectLike): string[] {
+  return Object.keys(schema.shape);
+}
+
+function getDiscriminatedUnionKeys(schema: ZodDiscriminatedUnionLike): string[] {
+  const keys = new Set<string>();
+
+  for (const option of schema.options) {
+    if (!isZodObject(option)) {
+      continue;
+    }
+
+    for (const key of Object.keys(option.shape)) {
+      keys.add(key);
+    }
+  }
+
+  return [...keys];
+}
+
+function buildSmartObjectClass<T extends SmartObjectSchema>(zodSchema: T) {
+  type Output = z.infer<T>;
+  const keys = isZodObject(zodSchema)
+    ? getObjectShapeKeys(zodSchema)
+    : getDiscriminatedUnionKeys(zodSchema);
+
+  class SmartObjectClass {
+    #data!: Output;
+    #operations: Operation[] = [];
+
+    static fromOperations(
+      initial: z.input<T> | undefined,
+      operations: Operation[],
+    ): SmartObjectInstance<T> {
+      const instance = new SmartObjectClass(initial);
+      instance.#applyOperations(operations);
+      return instance as unknown as SmartObjectInstance<T>;
+    }
+
+    #applyOperations(operations: Operation[]): void {
+      if (operations.length === 0) {
+        return;
+      }
+
+      applyPatch(this.#data as object, operations, false, true);
+      this.#operations.push(...operations);
+    }
+
+    get operations(): readonly Operation[] {
+      return this.#operations;
+    }
+
+    clearOperations(): void {
+      this.#operations.length = 0;
+    }
+
+    constructor(initial?: z.input<T>) {
+      for (const key of keys) {
+        const setMethodName = `set${key.charAt(0).toUpperCase()}${key.slice(1)}`;
+
+        Object.defineProperty(this, key, {
+          get: () => (this.#data as Record<string, unknown>)[key],
+          enumerable: true,
+          configurable: true,
+        });
+
+        Object.defineProperty(this, setMethodName, {
+          value: isZodObject(zodSchema)
+            ? this.#createObjectFieldSetter(zodSchema, key)
+            : this.#createUnionFieldSetter(zodSchema, key),
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
+      }
+
+      this.#data = zodSchema.parse(initial ?? {}) as Output;
+    }
+
+    #createObjectFieldSetter(schema: ZodObjectLike, key: string): (value: unknown) => void {
+      const fieldSchema = schema.shape[key as keyof typeof schema.shape];
+
+      return (value: unknown) => {
+        const parsed = fieldSchema.parse(value);
+        const beforeData = deepClone(this.#data) as object;
+        const afterData = { ...deepClone(this.#data), [key]: parsed };
+        const patch = compare(beforeData, afterData);
+
+        if (patch.length === 0) {
+          return;
+        }
+
+        applyPatch(this.#data as object, patch, false, true);
+        this.#operations.push(...patch);
+      };
+    }
+
+    #getActiveVariantObject(schema: ZodDiscriminatedUnionLike): ZodObjectLike | undefined {
+      const discriminator = schema._zod.def.discriminator as string;
+      const tag = (this.#data as Record<string, unknown>)[discriminator];
+
+      for (const option of schema.options) {
+        if (!isZodObject(option)) {
+          continue;
+        }
+
+        const tagSchema = option.shape[discriminator as keyof typeof option.shape];
+        if (tagSchema?.safeParse(tag).success) {
+          return option;
+        }
+      }
+
+      return undefined;
+    }
+
+    #createUnionFieldSetter(
+      schema: ZodDiscriminatedUnionLike,
+      key: string,
+    ): (value: unknown) => void {
+      return (value: unknown) => {
+        const activeVariant = this.#getActiveVariantObject(schema);
+        if (!activeVariant || !(key in activeVariant.shape)) {
+          throw new Error(`Cannot set "${key}" on the active discriminated-union variant`);
+        }
+
+        const beforeData = deepClone(this.#data) as object;
+        const candidate = { ...deepClone(this.#data), [key]: value };
+        const parsed = schema.parse(candidate) as Output;
+        const patch = compare(beforeData, parsed as object);
+
+        if (patch.length === 0) {
+          return;
+        }
+
+        this.#data = parsed;
+        this.#operations.push(...patch);
+      };
+    }
+  }
+
+  return SmartObjectClass as unknown as SmartObjectConstructor<T>;
+}
 
 /**
  * Builds a typed SmartObject class from a Zod schema.
@@ -18,8 +177,8 @@ const { applyPatch, compare, deepClone } = jsonPatch;
  * Initial construction does not emit operations because that state is the baseline
  * every subsequent patch is measured against.
  *
- * @typeParam T - Zod object schema that defines the instance shape
- * @param zodSchema - A `z.object({ ... })` describing the fields
+ * @typeParam T - Zod object or discriminated-union schema that defines the instance shape
+ * @param zodSchema - A `z.object({ ... })` or `z.discriminatedUnion(...)` describing the fields
  * @returns An instantiable class with types inferred from the schema
  *
  * @example
@@ -35,90 +194,16 @@ const { applyPatch, compare, deepClone } = jsonPatch;
  * console.log(person.operations); // [{ op: "replace", path: "/name", value: "Luigi" }]
  * ```
  */
-export function SmartObject<T extends z.ZodObject>(zodSchema: T): SmartObjectConstructor<T> {
-  const shape = zodSchema.shape;
-  type Output = z.infer<T>;
-
-  class SmartObjectClass {
-    // Kept private so reads/writes always go through the generated API.
-    #data!: Output;
-    // Append-only audit log, separate from current state — consumers replay
-    // or persist deltas without treating operations as readable fields.
-    #operations: Operation[] = [];
-
-    static fromOperations(
-      initial: z.input<T> | undefined,
-      operations: Operation[],
-    ): SmartObjectInstance<T> {
-      const instance = new SmartObjectClass(initial);
-      instance.#applyOperations(operations);
-      // TypeScript cannot see properties defined dynamically at runtime.
-      return instance as unknown as SmartObjectInstance<T>;
-    }
-
-    #applyOperations(operations: Operation[]): void {
-      // Nothing to replay — skip to avoid pointless patch application.
-      if (operations.length === 0) {
-        return;
-      }
-
-      applyPatch(this.#data, operations, false, true);
-      this.#operations.push(...operations);
-    }
-
-    get operations(): readonly Operation[] {
-      // Readonly surface prevents consumers from rewriting patch history.
-      return this.#operations;
-    }
-
-    clearOperations(): void {
-      // Clears the audit trail only — state stays intact after sync/persist.
-      this.#operations.length = 0;
-    }
-
-    constructor(initial?: z.input<T>) {
-      // Schema-driven API generation: one definition, no separate codegen step.
-      for (const key of Object.keys(shape)) {
-        const fieldSchema = shape[key as keyof typeof shape];
-        const setMethodName = `set${key.charAt(0).toUpperCase()}${key.slice(1)}`;
-
-        Object.defineProperty(this, key, {
-          get: () => this.#data[key as keyof Output],
-          // Data fields are enumerable so spreads/serialization see state.
-          enumerable: true,
-          configurable: true,
-        });
-
-        Object.defineProperty(this, setMethodName, {
-          value: (value: unknown) => {
-            // Validation runs before patching so invalid writes never
-            // corrupt the operation log.
-            const parsed = fieldSchema.parse(value) as Output[keyof Output];
-            // Immutable snapshot is required for an accurate diff.
-            const beforeData = deepClone(this.#data);
-            const afterData = { ...deepClone(this.#data), [key]: parsed };
-            const patch = compare(beforeData, afterData);
-
-            // Identical values must not pollute the log — keeps sync payloads minimal.
-            if (patch.length === 0) {
-              return;
-            }
-
-            applyPatch(this.#data, patch, false, true);
-            this.#operations.push(...patch);
-          },
-          // Setters are behavior, not serializable data.
-          enumerable: false,
-          configurable: true,
-          writable: true,
-        });
-      }
-
-      // Bootstrap validated state without recording setup as mutations.
-      this.#data = zodSchema.parse(initial ?? {}) as Output;
-    }
+export function SmartObject<T extends z.ZodObject>(zodSchema: T): SmartObjectConstructor<T>;
+export function SmartObject<T extends z.ZodDiscriminatedUnion>(
+  zodSchema: T,
+): SmartObjectConstructor<T>;
+export function SmartObject(
+  zodSchema: SmartObjectSchema,
+): SmartObjectConstructor<SmartObjectSchema> {
+  if (!isZodObject(zodSchema) && !isZodDiscriminatedUnion(zodSchema)) {
+    throw new TypeError("SmartObject requires a z.object(...) or z.discriminatedUnion(...) schema");
   }
 
-  // The runtime class shape is built dynamically; the cast documents the contract.
-  return SmartObjectClass as unknown as SmartObjectConstructor<T>;
+  return buildSmartObjectClass(zodSchema);
 }

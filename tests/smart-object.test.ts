@@ -186,6 +186,125 @@ describe("SmartObject", () => {
   });
 });
 
+const entitySchema = z.object({
+  id: z.string(),
+  payload: z.union([z.string(), z.number()]),
+  contact: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("email"), address: z.string() }),
+    z.object({ type: z.literal("phone"), number: z.string() }),
+  ]),
+});
+
+const Entity = SmartObject(entitySchema);
+
+type EntityInstance = SmartObjectInstance<typeof entitySchema>;
+
+const entityInitial = {
+  id: "e-1",
+  payload: "hello",
+  contact: { type: "email" as const, address: "mario@example.com" },
+};
+
+const eventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("click"), x: z.number(), y: z.number() }),
+  z.object({ type: z.literal("scroll"), delta: z.number() }),
+]);
+
+const Event = SmartObject(eventSchema);
+
+type EventInstance = SmartObjectInstance<typeof eventSchema>;
+
+const clickInitial = { type: "click" as const, x: 10, y: 20 };
+
+describe("SmartObject union fields", () => {
+  it("accepts primitive union values via setPayload", () => {
+    const entity = new Entity(entityInitial);
+
+    entity.setPayload(42);
+
+    expect(entity.payload).toBe(42);
+    expect(entity.operations).toEqual([{ op: "replace", path: "/payload", value: 42 }]);
+  });
+
+  it("replaces nested discriminated union contact variant", () => {
+    const entity = new Entity(entityInitial);
+    const phoneContact = { type: "phone" as const, number: "+39 333 1234567" };
+
+    entity.setContact(phoneContact);
+
+    expect(entity.contact).toEqual(phoneContact);
+    expect(entity.operations).toEqual([
+      { op: "remove", path: "/contact/address" },
+      { op: "replace", path: "/contact/type", value: "phone" },
+      { op: "add", path: "/contact/number", value: "+39 333 1234567" },
+    ]);
+  });
+
+  it("throws on invalid union field without altering state or operations", () => {
+    const entity = new Entity(entityInitial);
+
+    expect(() => entity.setPayload(true as unknown as string)).toThrow();
+    expect(entity.payload).toBe("hello");
+    expect(entity.operations).toEqual([]);
+  });
+});
+
+describe("SmartObject discriminated union root", () => {
+  it("populates getters for the active variant without operations", () => {
+    const event = new Event(clickInitial);
+
+    expect(event.type).toBe("click");
+    expect(event.x).toBe(10);
+    expect(event.y).toBe(20);
+    expect(event.operations).toEqual([]);
+  });
+
+  it("updates variant fields and accumulates replace operations", () => {
+    const event = new Event(clickInitial);
+
+    event.setX(15);
+    event.setY(25);
+
+    expect(event.x).toBe(15);
+    expect(event.y).toBe(25);
+    expect(event.operations).toEqual([
+      { op: "replace", path: "/x", value: 15 },
+      { op: "replace", path: "/y", value: 25 },
+    ]);
+  });
+
+  it("throws when setting a field invalid for the active variant", () => {
+    const event = new Event(clickInitial);
+
+    expect(() => event.setDelta(5)).toThrow();
+    expect(event.x).toBe(10);
+    expect(event.y).toBe(20);
+    expect(event.operations).toEqual([]);
+  });
+
+  it("throws when changing discriminator without a complete new variant", () => {
+    const event = new Event(clickInitial);
+
+    expect(() => event.setType("scroll")).toThrow();
+    expect(event.type).toBe("click");
+    expect(event.operations).toEqual([]);
+  });
+
+  it("replays operations via fromOperations", () => {
+    const source = new Event(clickInitial);
+
+    source.setX(15);
+    source.setY(25);
+
+    const operations = [...source.operations];
+    const replayed = Event.fromOperations(clickInitial, operations);
+
+    expect(replayed.x).toBe(15);
+    expect(replayed.y).toBe(25);
+    expect(replayed.operations).toEqual(operations);
+  });
+});
+
 describe("SmartObject types", () => {
   it("infers getters, set*, operations, and fromOperations", () => {
     expectTypeOf<PersonInstance>().toHaveProperty("name");
@@ -210,5 +329,29 @@ describe("SmartObject types", () => {
     >();
 
     expectTypeOf(Person.fromOperations(initial, [])).toEqualTypeOf<PersonInstance>();
+  });
+
+  it("infers union field setters", () => {
+    expectTypeOf<EntityInstance["setPayload"]>().parameter(0).toEqualTypeOf<string | number>();
+    expectTypeOf<EntityInstance["setContact"]>()
+      .parameter(0)
+      .toEqualTypeOf<{ type: "email"; address: string } | { type: "phone"; number: string }>();
+  });
+
+  it("infers discriminated union root getters and setters", () => {
+    expectTypeOf<EventInstance>().toHaveProperty("type");
+    expectTypeOf<EventInstance>().toHaveProperty("x");
+    expectTypeOf<EventInstance>().toHaveProperty("y");
+    expectTypeOf<EventInstance>().toHaveProperty("delta");
+
+    expectTypeOf<EventInstance["setType"]>().parameter(0).toEqualTypeOf<"click" | "scroll">();
+    expectTypeOf<EventInstance["setX"]>().parameter(0).toEqualTypeOf<number>();
+    expectTypeOf<EventInstance["setDelta"]>().parameter(0).toEqualTypeOf<number>();
+
+    expectTypeOf<ConstructorParameters<typeof Event>[0]>().toEqualTypeOf<
+      z.input<typeof eventSchema> | undefined
+    >();
+
+    expectTypeOf(Event.fromOperations(clickInitial, [])).toEqualTypeOf<EventInstance>();
   });
 });
