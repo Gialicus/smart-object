@@ -5,15 +5,21 @@ import {
   getDiscriminator,
   getObjectShapeKeys,
   getRecordFields,
+  getRecordFieldsFromSchema,
   getUnionObjectKeys,
+  isStringKeyMap,
+  isZodBigInt,
   isZodDate,
   isZodDiscriminatedUnion,
+  isZodMap,
   isZodObject,
   isZodRecord,
+  isZodSet,
   isZodUnionOfObjects,
   isZodUnionRoot,
   toSetterMethodName,
   toVariantSwitchMethodName,
+  unwrapFieldSchema,
 } from "../src/zod-introspect.ts";
 
 describe("zod-introspect", () => {
@@ -77,7 +83,42 @@ describe("zod-introspect", () => {
     expect(isZodRecord(recordField)).toBe(true);
     expect(isZodDate(z.date())).toBe(true);
     expect(getRecordFields(objectWithRecord)).toEqual([
-      { fieldName: "tags", valueSchema: recordField._zod.def.valueType },
+      {
+        fieldName: "tags",
+        fieldSchema: recordField,
+        valueSchema: recordField._zod.def.valueType,
+        storage: "record",
+      },
+    ]);
+  });
+
+  it("unwraps lazy and pipe wrappers for introspection", () => {
+    const lazyRecord = z.lazy(() => z.record(z.string(), z.number()));
+    const preprocessRecord = z.preprocess((value) => value, z.record(z.string(), z.number()));
+
+    expect(unwrapFieldSchema(lazyRecord)._zod.def.type).toBe("record");
+    expect(unwrapFieldSchema(preprocessRecord)._zod.def.type).toBe("record");
+    expect(getRecordFieldsFromSchema(z.object({ tags: lazyRecord }))).toHaveLength(1);
+    expect(getRecordFieldsFromSchema(z.object({ tags: preprocessRecord }))).toHaveLength(1);
+  });
+
+  it("detects map, set, and bigint schemas", () => {
+    const mapField = z.map(z.string(), z.number());
+    const setField = z.set(z.string());
+    const bigintField = z.bigint();
+
+    expect(isZodMap(mapField)).toBe(true);
+    expect(isZodSet(setField)).toBe(true);
+    expect(isZodBigInt(bigintField)).toBe(true);
+    expect(isStringKeyMap(mapField)).toBe(true);
+    expect(isStringKeyMap(z.map(z.number(), z.string()))).toBe(false);
+    expect(getRecordFields(z.object({ tags: mapField }))).toEqual([
+      {
+        fieldName: "tags",
+        fieldSchema: mapField,
+        valueSchema: mapField._zod.def.valueType,
+        storage: "map",
+      },
     ]);
   });
 });

@@ -159,8 +159,9 @@ RFC 6902 operation emitted by [fast-json-patch](https://github.com/Starcounter-J
 
 - **Partial discriminator write** — Changing a discriminated union discriminator alone via `setType(...)` without providing the new variant fields throws `SmartObjectError`. Use `switchVariant(...)` or `switchTo{Variant}(...)` instead.
 - **Union field on wrong variant** — Setting a field that does not exist on the active variant throws `SmartObjectError`.
-- **Date fields** — `z.date()` and `z.coerce.date()` are supported; operations store ISO 8601 strings while getters return `Date` instances. `Map`, `Set`, and other non-JSON types remain unsupported.
-- **Transforms** — `z.transform` / `z.pipe` with different input and output types are not supported for replay-safe patching.
+- **Date fields** — `z.date()` and `z.coerce.date()` are supported; operations store ISO 8601 strings while getters return `Date` instances.
+- **Map, Set, and bigint** — `z.map` (string keys), `z.set`, and `z.bigint()` are supported with explicit codecs; operations use JSON-safe plain objects, arrays, and decimal strings respectively. Whole-field replace is used for Map/Set updates. Non-string map keys are not supported.
+- **Transforms** — `z.transform` / `z.pipe` with preprocessing work at runtime; operations store the **output** value after validation. TypeScript setter input types may not reflect transforms.
 
 ## Design rationale
 

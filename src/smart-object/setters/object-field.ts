@@ -1,9 +1,54 @@
+import type { Operation } from "fast-json-patch";
 import type { z } from "zod";
 import { SmartObjectError } from "../../errors.js";
 import type { SmartObjectSchema } from "../../types.js";
-import { serializeDataForPatch, serializePatchValue } from "../codecs.js";
+import { unwrapFieldSchema } from "../../zod-introspect.js";
+import { serializeDataForPatch, serializeValue } from "../codecs.js";
 import type { InstanceState } from "../instance-state.js";
 import { compare, deepClone } from "../json-patch.js";
+
+function normalizeFieldPatch(
+  patch: Operation[],
+  key: string,
+  fieldSchema: z.ZodType,
+  parsed: unknown,
+  beforeSerialized: Record<string, unknown>,
+): Operation[] {
+  const inner = unwrapFieldSchema(fieldSchema);
+  const defType = inner._zod.def.type;
+
+  if (defType !== "set" && defType !== "map") {
+    return patch.map((operation) => {
+      if ("value" in operation && operation.path === `/${key}`) {
+        return {
+          ...operation,
+          value: serializeValue(fieldSchema, parsed),
+        };
+      }
+
+      return operation;
+    });
+  }
+
+  const prefix = `/${key}`;
+  const touchesField = patch.some(
+    (operation) => operation.path === prefix || operation.path.startsWith(`${prefix}/`),
+  );
+
+  if (!touchesField) {
+    return patch;
+  }
+
+  const hadField = Object.hasOwn(beforeSerialized, key) && beforeSerialized[key] !== undefined;
+
+  return [
+    {
+      op: hadField ? "replace" : "add",
+      path: prefix,
+      value: serializeValue(fieldSchema, parsed),
+    },
+  ];
+}
 
 export function createObjectFieldSetter<T>(
   state: InstanceState<T>,
@@ -25,19 +70,19 @@ export function createObjectFieldSetter<T>(
     const afterData = deepClone(data) as Record<string, unknown>;
     afterData[key] = parsed;
 
-    const patch = compare(
-      serializeDataForPatch(beforeData as Record<string, unknown>, rootSchema),
-      serializeDataForPatch(afterData, rootSchema),
-    ).map((operation) => {
-      if ("value" in operation && operation.path === `/${key}`) {
-        return {
-          ...operation,
-          value: serializePatchValue(rootSchema, key, parsed),
-        };
-      }
+    const beforeSerialized = serializeDataForPatch(
+      beforeData as Record<string, unknown>,
+      rootSchema,
+    );
+    const afterSerialized = serializeDataForPatch(afterData, rootSchema);
 
-      return operation;
-    });
+    const patch = normalizeFieldPatch(
+      compare(beforeSerialized, afterSerialized),
+      key,
+      fieldSchema,
+      parsed,
+      beforeSerialized,
+    );
 
     if (patch.length === 0) {
       return;

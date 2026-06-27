@@ -66,21 +66,30 @@ export type VariantSwitchMethods<T> = {
 export type DiscriminatedVariantSwitchMethods<T, D extends PropertyKey> = VariantSwitchMethods<T> &
   UnionToIntersection<PerVariantSwitchMethod<T, D>>;
 
-type RecordValue<T> = T extends Record<string, infer V> ? V : never;
+type EntryValue<T> =
+  T extends Record<string, infer V> ? V : T extends Map<string, infer V> ? V : never;
+
+type IsEntryField<T> =
+  NonNullable<T> extends Record<string, unknown>
+    ? true
+    : NonNullable<T> extends Map<string, infer _V>
+      ? true
+      : false;
 
 /**
- * Dynamic entry accessors for `z.record` fields.
+ * Dynamic entry accessors for `z.record` and string-key `z.map` fields.
  */
 export type RecordFieldMethods<T> = {
-  [K in keyof T as T[K] extends Record<string, unknown> | undefined
-    ? `get${Capitalize<string & K>}Entry`
-    : never]: (key: string) => RecordValue<NonNullable<T[K]>> | undefined;
+  [K in keyof T as IsEntryField<T[K]> extends true ? `get${Capitalize<string & K>}Entry` : never]: (
+    key: string,
+  ) => EntryValue<NonNullable<T[K]>> | undefined;
 } & {
-  [K in keyof T as T[K] extends Record<string, unknown> | undefined
-    ? `set${Capitalize<string & K>}Entry`
-    : never]: (key: string, value: RecordValue<NonNullable<T[K]>>) => void;
+  [K in keyof T as IsEntryField<T[K]> extends true ? `set${Capitalize<string & K>}Entry` : never]: (
+    key: string,
+    value: EntryValue<NonNullable<T[K]>>,
+  ) => void;
 } & {
-  [K in keyof T as T[K] extends Record<string, unknown> | undefined
+  [K in keyof T as IsEntryField<T[K]> extends true
     ? `delete${Capitalize<string & K>}Entry`
     : never]: (key: string) => void;
 };

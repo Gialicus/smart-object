@@ -27,25 +27,25 @@ function defineRecordFieldMethods<T>(
   state: InstanceState<T>,
   zodSchema: SmartObjectSchema,
 ): void {
-  for (const { fieldName, valueSchema } of getRecordFieldsFromSchema(zodSchema)) {
-    const prefix = toRecordEntryMethodPrefix(fieldName);
+  for (const field of getRecordFieldsFromSchema(zodSchema)) {
+    const prefix = toRecordEntryMethodPrefix(field.fieldName);
 
     Object.defineProperty(prototype, `get${prefix}Entry`, {
-      value: createRecordEntryGetter(state, fieldName),
+      value: createRecordEntryGetter(state, field),
       enumerable: false,
       configurable: true,
       writable: true,
     });
 
     Object.defineProperty(prototype, `set${prefix}Entry`, {
-      value: createRecordEntrySetter(state, fieldName, valueSchema),
+      value: createRecordEntrySetter(state, zodSchema, field),
       enumerable: false,
       configurable: true,
       writable: true,
     });
 
     Object.defineProperty(prototype, `delete${prefix}Entry`, {
-      value: createRecordEntryDeleter(state, fieldName),
+      value: createRecordEntryDeleter(state, zodSchema, field),
       enumerable: false,
       configurable: true,
       writable: true,

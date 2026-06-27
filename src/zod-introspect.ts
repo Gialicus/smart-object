@@ -15,7 +15,9 @@ export type DiscriminatedVariantInfo = {
 
 export type RecordFieldInfo = {
   fieldName: string;
+  fieldSchema: z.ZodType;
   valueSchema: z.ZodType;
+  storage: "record" | "map";
 };
 
 export function isZodObject(schema: unknown): schema is ZodObjectLike {
@@ -144,21 +146,73 @@ export function isZodDate(schema: unknown): boolean {
   return def.type === "date";
 }
 
-export function unwrapOptionalNullable(schema: z.ZodType): z.ZodType {
+export function isZodMap(schema: unknown): schema is z.ZodMap {
+  return (
+    typeof schema === "object" &&
+    schema !== null &&
+    "_zod" in schema &&
+    (schema as z.ZodType)._zod.def.type === "map"
+  );
+}
+
+export function isZodSet(schema: unknown): schema is z.ZodSet {
+  return (
+    typeof schema === "object" &&
+    schema !== null &&
+    "_zod" in schema &&
+    (schema as z.ZodType)._zod.def.type === "set"
+  );
+}
+
+export function isZodBigInt(schema: unknown): boolean {
+  if (typeof schema !== "object" || schema === null || !("_zod" in schema)) {
+    return false;
+  }
+
+  return (schema as z.ZodType)._zod.def.type === "bigint";
+}
+
+export function isStringKeyMap(schema: unknown): schema is z.ZodMap {
+  if (!isZodMap(schema)) {
+    return false;
+  }
+
+  const keyType = unwrapFieldSchema(schema._zod.def.keyType as z.ZodType);
+  return keyType._zod.def.type === "string";
+}
+
+export function unwrapFieldSchema(schema: z.ZodType): z.ZodType {
   const def = schema._zod.def as {
     type?: string;
     innerType?: z.ZodType;
+    getter?: () => z.ZodType;
+    in?: z.ZodType;
+    out?: z.ZodType;
   };
 
-  if (def.type === "optional" || def.type === "nullable") {
-    return unwrapOptionalNullable(def.innerType as z.ZodType);
+  if (def.type === "optional" || def.type === "nullable" || def.type === "default") {
+    return unwrapFieldSchema(def.innerType as z.ZodType);
   }
 
-  if (def.type === "default") {
-    return unwrapOptionalNullable(def.innerType as z.ZodType);
+  if (def.type === "lazy") {
+    return unwrapFieldSchema(def.getter?.() as z.ZodType);
+  }
+
+  if (def.type === "pipe") {
+    const outType = (def.out as z.ZodType)?._zod.def.type;
+    if (outType === "transform") {
+      return unwrapFieldSchema(def.in as z.ZodType);
+    }
+
+    return unwrapFieldSchema(def.out as z.ZodType);
   }
 
   return schema;
+}
+
+/** @deprecated Use unwrapFieldSchema */
+export function unwrapOptionalNullable(schema: z.ZodType): z.ZodType {
+  return unwrapFieldSchema(schema);
 }
 
 export function isZodIntersection(schema: SmartObjectSchema): schema is ZodIntersectionLike {
@@ -177,17 +231,41 @@ export function resolveLazySchema(schema: SmartObjectSchema): SmartObjectSchema 
   return schema;
 }
 
+function collectEntryField(
+  fieldName: string,
+  fieldSchema: z.ZodType,
+  unwrapped: z.ZodType,
+): RecordFieldInfo | undefined {
+  if (isZodRecord(unwrapped)) {
+    return {
+      fieldName,
+      fieldSchema,
+      valueSchema: unwrapped._zod.def.valueType as z.ZodType,
+      storage: "record",
+    };
+  }
+
+  if (isStringKeyMap(unwrapped)) {
+    return {
+      fieldName,
+      fieldSchema,
+      valueSchema: unwrapped._zod.def.valueType as z.ZodType,
+      storage: "map",
+    };
+  }
+
+  return undefined;
+}
+
 export function getRecordFields(schema: ZodObjectLike): RecordFieldInfo[] {
   const fields: RecordFieldInfo[] = [];
 
   for (const [fieldName, fieldSchema] of Object.entries(schema.shape)) {
-    const unwrapped = unwrapOptionalNullable(fieldSchema as z.ZodType);
+    const unwrapped = unwrapFieldSchema(fieldSchema as z.ZodType);
+    const entryField = collectEntryField(fieldName, fieldSchema as z.ZodType, unwrapped);
 
-    if (isZodRecord(unwrapped)) {
-      fields.push({
-        fieldName,
-        valueSchema: unwrapped._zod.def.valueType as z.ZodType,
-      });
+    if (entryField) {
+      fields.push(entryField);
     }
   }
 
