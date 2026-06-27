@@ -1,6 +1,6 @@
 {
   "name": "@gialicus/smart-object",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Oggetti TypeScript generati da schemi Zod con getter, set* tipizzati e operazioni JSON Patch",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,10 +12,12 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "check": "biome check .",
     "check:fix": "biome check --write .",
@@ -24,7 +26,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "npm run build && npm test",
-    "prepare": "husky"
+    "prepare": "node -e \"process.exit(require('fs').existsSync('.git')?0:1)\" && husky || true"
   },
   "peerDependencies": {
     "zod": "^4.0.0"
