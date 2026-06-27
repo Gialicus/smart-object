@@ -42,6 +42,54 @@ describe("SmartObject discriminated union root", () => {
     expect(event.operations).toEqual([]);
   });
 
+  it("switches variant atomically via switchVariant", () => {
+    const event = new Event(clickInitial);
+
+    event.switchVariant({ type: "scroll", delta: 5 });
+
+    expect(event.type).toBe("scroll");
+    expect(event.delta).toBe(5);
+    expect(event.operations).toEqual(
+      expect.arrayContaining([
+        { op: "remove", path: "/x" },
+        { op: "remove", path: "/y" },
+        { op: "replace", path: "/type", value: "scroll" },
+        { op: "add", path: "/delta", value: 5 },
+      ]),
+    );
+    expect(event.operations).toHaveLength(4);
+  });
+
+  it("switches variant via generated switchTo* method", () => {
+    const event = new Event(clickInitial);
+
+    event.switchToScroll({ delta: 8 });
+
+    expect(event.type).toBe("scroll");
+    expect(event.delta).toBe(8);
+    expect(event.operations.length).toBeGreaterThan(0);
+  });
+
+  it("does not accumulate operations when switchVariant is a no-op", () => {
+    const event = new Event({ type: "scroll", delta: 5 });
+
+    event.switchVariant({ type: "scroll", delta: 5 });
+
+    expect(event.operations).toEqual([]);
+  });
+
+  it("replays variant switch via fromOperations", () => {
+    const source = new Event(clickInitial);
+
+    source.switchToScroll({ delta: 5 });
+    const operations = [...source.operations];
+    const replayed = Event.fromOperations(clickInitial, operations);
+
+    expect(replayed.type).toBe("scroll");
+    expect(replayed.delta).toBe(5);
+    expect(replayed.operations).toEqual(operations);
+  });
+
   it("replays operations via fromOperations", () => {
     const source = new Event(clickInitial);
 

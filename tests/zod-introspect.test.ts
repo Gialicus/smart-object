@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 import z from "zod";
 import {
+  getDiscriminatedVariants,
   getDiscriminator,
   getObjectShapeKeys,
+  getRecordFields,
   getUnionObjectKeys,
+  isZodDate,
   isZodDiscriminatedUnion,
   isZodObject,
+  isZodRecord,
   isZodUnionOfObjects,
   isZodUnionRoot,
   toSetterMethodName,
+  toVariantSwitchMethodName,
 } from "../src/zod-introspect.ts";
 
 describe("zod-introspect", () => {
@@ -55,5 +60,24 @@ describe("zod-introspect", () => {
   it("builds setter method names", () => {
     expect(toSetterMethodName("userId")).toBe("setUserId");
     expect(toSetterMethodName("name")).toBe("setName");
+  });
+
+  it("collects discriminated union variants", () => {
+    expect(getDiscriminatedVariants(discriminatedSchema)).toEqual([
+      { tag: "a", schema: discriminatedSchema.options[0], methodName: "switchToA" },
+      { tag: "b", schema: discriminatedSchema.options[1], methodName: "switchToB" },
+    ]);
+    expect(toVariantSwitchMethodName("scroll")).toBe("switchToScroll");
+  });
+
+  it("detects record and date field schemas", () => {
+    const recordField = z.record(z.string(), z.number());
+    const objectWithRecord = z.object({ tags: recordField, dueAt: z.date() });
+
+    expect(isZodRecord(recordField)).toBe(true);
+    expect(isZodDate(z.date())).toBe(true);
+    expect(getRecordFields(objectWithRecord)).toEqual([
+      { fieldName: "tags", valueSchema: recordField._zod.def.valueType },
+    ]);
   });
 });

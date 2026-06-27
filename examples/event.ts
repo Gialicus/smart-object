@@ -18,8 +18,10 @@ console.log({ type: event.type, x: event.x, y: event.y, operations: event.operat
 event.setX(15);
 event.setY(25);
 
-console.log("\nAfter mutations:");
-console.log({ type: event.type, x: event.x, y: event.y, operations: event.operations });
+event.switchToScroll({ delta: 5 });
+
+console.log("\nAfter variant switch:");
+console.log({ type: event.type, delta: event.delta, operations: event.operations });
 
 event.setX(15);
 console.log("\nNo-op write (unchanged value):");

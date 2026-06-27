@@ -51,6 +51,10 @@ describe("SmartObject types", () => {
     expectTypeOf<EventInstance["setType"]>().parameter(0).toEqualTypeOf<"click" | "scroll">();
     expectTypeOf<EventInstance["setX"]>().parameter(0).toEqualTypeOf<number>();
     expectTypeOf<EventInstance["setDelta"]>().parameter(0).toEqualTypeOf<number>();
+    expectTypeOf<EventInstance["switchVariant"]>()
+      .parameter(0)
+      .toEqualTypeOf<{ type: "click"; x: number; y: number } | { type: "scroll"; delta: number }>();
+    expectTypeOf<EventInstance["switchToScroll"]>().parameter(0).toEqualTypeOf<{ delta: number }>();
 
     expectTypeOf<ConstructorParameters<typeof Event>[0]>().toEqualTypeOf<
       z.input<typeof eventSchema> | undefined

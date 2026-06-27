@@ -1,8 +1,44 @@
 import type { z } from "zod";
 import { SmartObjectError } from "../errors.js";
 import type { SmartObjectConstructor, SmartObjectSchema } from "../types.js";
-import { isZodObject, isZodUnionOfObjects, isZodUnionRoot } from "../zod-introspect.js";
+import {
+  isZodIntersection,
+  isZodObject,
+  isZodUnionOfObjects,
+  isZodUnionRoot,
+  resolveLazySchema,
+} from "../zod-introspect.js";
 import { buildSmartObjectClass } from "./build-class.js";
+
+function assertBuildableSchema(schema: SmartObjectSchema): void {
+  const resolved = resolveLazySchema(schema);
+
+  if (isZodObject(resolved)) {
+    return;
+  }
+
+  if (isZodUnionRoot(resolved)) {
+    if (!isZodUnionOfObjects(resolved)) {
+      throw SmartObjectError.unsupportedSchema(
+        "SmartObject union root requires all options to be z.object(...)",
+      );
+    }
+
+    return;
+  }
+
+  if (isZodIntersection(resolved)) {
+    const left = resolved._zod.def.left as SmartObjectSchema;
+    const right = resolved._zod.def.right as SmartObjectSchema;
+    assertBuildableSchema(left);
+    assertBuildableSchema(right);
+    return;
+  }
+
+  throw SmartObjectError.unsupportedSchema(
+    "SmartObject requires a buildable z.object(...), z.union([...]), z.discriminatedUnion(...), z.intersection(...), or z.lazy(...) schema",
+  );
+}
 
 /**
  * Builds a typed SmartObject class from a Zod schema.
@@ -39,24 +75,11 @@ export function SmartObject<T extends z.ZodDiscriminatedUnion>(
   zodSchema: T,
 ): SmartObjectConstructor<T>;
 export function SmartObject<T extends z.ZodUnion>(zodSchema: T): SmartObjectConstructor<T>;
+export function SmartObject<T extends z.ZodIntersection>(zodSchema: T): SmartObjectConstructor<T>;
+export function SmartObject<T extends z.ZodLazy>(zodSchema: T): SmartObjectConstructor<T>;
 export function SmartObject(
   zodSchema: SmartObjectSchema,
 ): SmartObjectConstructor<SmartObjectSchema> {
-  if (isZodObject(zodSchema)) {
-    return buildSmartObjectClass(zodSchema);
-  }
-
-  if (isZodUnionRoot(zodSchema)) {
-    if (!isZodUnionOfObjects(zodSchema)) {
-      throw SmartObjectError.unsupportedSchema(
-        "SmartObject union root requires all options to be z.object(...)",
-      );
-    }
-
-    return buildSmartObjectClass(zodSchema);
-  }
-
-  throw SmartObjectError.unsupportedSchema(
-    "SmartObject requires a z.object(...), z.union([...]), or z.discriminatedUnion(...) schema",
-  );
+  assertBuildableSchema(zodSchema);
+  return buildSmartObjectClass(zodSchema);
 }

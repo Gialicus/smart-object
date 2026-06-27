@@ -1,15 +1,16 @@
+import type { z } from "zod";
 import { SmartObjectError } from "../../errors.js";
-import type { ZodObjectLike } from "../../zod-introspect.js";
+import type { SmartObjectSchema } from "../../types.js";
+import { serializeDataForPatch, serializePatchValue } from "../codecs.js";
 import type { InstanceState } from "../instance-state.js";
-import { applyPatch, compare, deepClone } from "../json-patch.js";
+import { compare, deepClone } from "../json-patch.js";
 
 export function createObjectFieldSetter<T>(
   state: InstanceState<T>,
-  schema: ZodObjectLike,
   key: string,
+  fieldSchema: z.ZodType,
+  rootSchema: SmartObjectSchema,
 ) {
-  const fieldSchema = schema.shape[key as keyof typeof schema.shape];
-
   return function (this: object, value: unknown) {
     let parsed: unknown;
 
@@ -23,13 +24,27 @@ export function createObjectFieldSetter<T>(
     const beforeData = deepClone(data) as object;
     const afterData = deepClone(data) as Record<string, unknown>;
     afterData[key] = parsed;
-    const patch = compare(beforeData, afterData);
+
+    const patch = compare(
+      serializeDataForPatch(beforeData as Record<string, unknown>, rootSchema),
+      serializeDataForPatch(afterData, rootSchema),
+    ).map((operation) => {
+      if ("value" in operation && operation.path === `/${key}`) {
+        return {
+          ...operation,
+          value: serializePatchValue(rootSchema, key, parsed),
+        };
+      }
+
+      return operation;
+    });
 
     if (patch.length === 0) {
       return;
     }
 
-    applyPatch(data as object, patch, false, true);
+    afterData[key] = parsed;
+    state.setData(this, afterData as T);
     state.getOperations(this).push(...patch);
   };
 }

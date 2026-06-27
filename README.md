@@ -63,6 +63,10 @@ const Event = SmartObject(z.discriminatedUnion("type", [
 
 const event = new Event({ type: "click", x: 10, y: 20 });
 event.setX(15);
+
+// Switch the active union variant atomically
+event.switchToScroll({ delta: 5 });
+// or: event.switchVariant({ type: "scroll", delta: 5 });
 ```
 
 See [`examples/event.ts`](examples/event.ts) and [`examples/profile.ts`](examples/profile.ts) for full demos.
@@ -77,7 +81,7 @@ Factory that accepts a Zod schema and returns an instantiable class.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `schema` | `z.ZodObject` \| `z.ZodUnion` \| `z.ZodDiscriminatedUnion` | Zod schema defining the object shape |
+| `schema` | `z.ZodObject` \| `z.ZodUnion` \| `z.ZodDiscriminatedUnion` \| `z.ZodIntersection` \| `z.ZodLazy` | Zod schema defining the object shape |
 
 **Members generated for each schema field `foo`:**
 
@@ -87,6 +91,21 @@ Factory that accepts a Zod schema and returns an instantiable class.
 | `setFoo(value)` | `(value: T) => void` | Validates, updates state, and records patches only when the value actually changes |
 
 `set*` method names follow camelCase with the field name capitalized (`name` → `setName`, `userId` → `setUserId`).
+
+**Union root extras** (discriminated and generic unions):
+
+| Member | Type | Description |
+|--------|------|-------------|
+| `switchVariant(value)` | `(variant) => void` | Replaces the entire active variant after full schema validation |
+| `switchTo{Variant}(fields)` | `(fields) => void` | Discriminated unions only — switches to a variant without repeating the discriminator (e.g. `switchToScroll({ delta: 5 })`) |
+
+**Record field extras** (for each `z.record(...)` field `tags`):
+
+| Member | Type | Description |
+|--------|------|-------------|
+| `getTagsEntry(key)` | `(key: string) => V \| undefined` | Reads a single record entry |
+| `setTagsEntry(key, value)` | `(key: string, value: V) => void` | Validates and patches a single entry (`/tags/{key}`) |
+| `deleteTagsEntry(key)` | `(key: string) => void` | Removes a record entry |
 
 **Instance members:**
 
@@ -128,6 +147,9 @@ RFC 6902 operation emitted by [fast-json-patch](https://github.com/Starcounter-J
 - `SetMethodsUnion<T>` — `set*` methods for union root schemas
 - `AllKeys<T>` — all keys across union members
 - `UnionDataShape<U>` — flattened data shape for union roots
+- `VariantSwitchMethods<T>` — `switchVariant` for union roots
+- `DiscriminatedVariantSwitchMethods<T, D>` — `switchVariant` plus generated `switchTo*` methods
+- `RecordFieldMethods<T>` — dynamic entry accessors for `z.record` fields
 - `OperationsAccessor` — `operations` and `clearOperations()`
 - `SnapshotAccessor<T>` — `toJSON()`
 - `SmartObjectConstructor<T>` — constructor type including `fromOperations`
@@ -135,9 +157,10 @@ RFC 6902 operation emitted by [fast-json-patch](https://github.com/Starcounter-J
 
 ## Limitations
 
-- **Partial variant switch** — Changing a discriminated union discriminator alone (e.g. `setType("scroll")` without providing `delta`) is not supported and throws `SmartObjectError`.
+- **Partial discriminator write** — Changing a discriminated union discriminator alone via `setType(...)` without providing the new variant fields throws `SmartObjectError`. Use `switchVariant(...)` or `switchTo{Variant}(...)` instead.
 - **Union field on wrong variant** — Setting a field that does not exist on the active variant throws `SmartObjectError`.
-- **JSON-only values** — RFC 6902 patches work on JSON-serializable data. `Date`, `Map`, and other non-JSON types are not supported.
+- **Date fields** — `z.date()` and `z.coerce.date()` are supported; operations store ISO 8601 strings while getters return `Date` instances. `Map`, `Set`, and other non-JSON types remain unsupported.
+- **Transforms** — `z.transform` / `z.pipe` with different input and output types are not supported for replay-safe patching.
 
 ## Design rationale
 
@@ -169,13 +192,16 @@ smart-object/
 │       ├── build-class.ts    # Class generation orchestration
 │       ├── instance-state.ts # WeakMap-backed instance storage
 │       ├── read-field.ts     # Defensive getter reads
-│       ├── json-patch.ts     # fast-json-patch wrapper
+│       ├── json-patch.ts     # fast-json-patch wrapper + Date-safe deepClone
+│       ├── codecs.ts         # ISO 8601 serialization for date fields
 │       ├── apply-operations.ts # Replay and rollback
 │       ├── union-variant.ts  # Union variant matching
 │       ├── define-prototype.ts # Getter/setter prototype setup
 │       └── setters/
 │           ├── object-field.ts
-│           └── union-field.ts
+│           ├── union-field.ts
+│           ├── variant-switch.ts
+│           └── record-field.ts
 ├── examples/
 │   ├── person.ts
 │   ├── event.ts
@@ -199,6 +225,9 @@ smart-object/
 │   │   ├── setter-naming.test.ts
 │   │   ├── to-json.test.ts
 │   │   ├── schema-variants.test.ts
+│   │   ├── record-fields.test.ts
+│   │   ├── date-codec.test.ts
+│   │   ├── intersection-lazy.test.ts
 │   │   └── types.test.ts
 │   └── zod-introspect.test.ts
 └── dist/                     # Build output (generated)

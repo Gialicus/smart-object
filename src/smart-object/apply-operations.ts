@@ -1,6 +1,7 @@
 import type { Operation } from "fast-json-patch";
 import { SmartObjectError } from "../errors.js";
 import type { SmartObjectSchema } from "../types.js";
+import { deserializeDataFromPatch } from "./codecs.js";
 import type { InstanceState } from "./instance-state.js";
 import { applyPatch, deepClone } from "./json-patch.js";
 
@@ -19,7 +20,8 @@ export function applyOperations<T>(
 
   try {
     applyPatch(data as object, operations, false, true);
-    const validated = zodSchema.parse(data) as T;
+    const deserialized = deserializeDataFromPatch(data as Record<string, unknown>, zodSchema) as T;
+    const validated = zodSchema.parse(deserialized) as T;
     state.setData(instance, validated);
     state.getOperations(instance).push(...operations);
   } catch (cause) {

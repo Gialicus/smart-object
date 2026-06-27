@@ -1,7 +1,7 @@
 import type { Operation } from "fast-json-patch";
 import type { z } from "zod";
 import type { SmartObjectConstructor, SmartObjectInstance, SmartObjectSchema } from "../types.js";
-import { getObjectShapeKeys, getUnionObjectKeys, isZodObject } from "../zod-introspect.js";
+import { getSchemaShapeKeys } from "../zod-introspect.js";
 import { applyOperations } from "./apply-operations.js";
 import { definePrototype } from "./define-prototype.js";
 import { createInstanceState } from "./instance-state.js";
@@ -11,9 +11,7 @@ export function buildSmartObjectClass<T extends SmartObjectSchema>(
   zodSchema: T,
 ): SmartObjectConstructor<T> {
   type Output = z.infer<T>;
-  const keys = isZodObject(zodSchema)
-    ? getObjectShapeKeys(zodSchema)
-    : getUnionObjectKeys(zodSchema);
+  const keys = getSchemaShapeKeys(zodSchema);
 
   const state = createInstanceState<Output>();
 
