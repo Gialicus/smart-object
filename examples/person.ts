@@ -55,10 +55,20 @@ person.clearOperations();
 console.log("\nAfter clearOperations (state preserved, log empty):");
 console.log({ name: person.name, operations: person.operations });
 
-const replayed = Person.fromOperations(initial, [
-  { op: "replace", path: "/name", value: "Luigi" },
-  { op: "replace", path: "/age", value: 31 },
-]);
+const operations = [
+  { op: "replace" as const, path: "/name", value: "Luigi" },
+  { op: "replace" as const, path: "/age", value: 31 },
+  { op: "replace" as const, path: "/address", value: { street: "Via Roma 2", city: "Milano" } },
+  { op: "replace" as const, path: "/skills", value: [{ name: "Testing", level: 5 }] },
+];
+
+const replayed = Person.fromOperations(initial, operations);
 
 console.log("\nReplayed from baseline + operations:");
-console.log({ name: replayed.name, age: replayed.age, operations: replayed.operations });
+console.log({
+  name: replayed.name,
+  age: replayed.age,
+  address: replayed.address,
+  skills: replayed.skills,
+  operations: replayed.operations,
+});

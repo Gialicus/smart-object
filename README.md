@@ -8,7 +8,7 @@ Typed TypeScript objects backed by Zod schemas, with an RFC 6902 operation log f
 npm install @gialicus/smart-object zod
 ```
 
-Dependencies: [Zod](https://zod.dev) (peer dependency — schema validation) and [fast-json-patch](https://github.com/Starcounter-Jack/JSON-Patch) (RFC 6902 patch application, bundled).
+Dependencies: [Zod](https://zod.dev) `^4.0.0` (peer dependency — schema validation) and [fast-json-patch](https://github.com/Starcounter-Jack/JSON-Patch) (RFC 6902 patch application, bundled).
 
 ## Usage
 
@@ -99,13 +99,13 @@ Factory that accepts a Zod schema and returns an instantiable class.
 | `switchVariant(value)` | `(variant) => void` | Replaces the entire active variant after full schema validation |
 | `switchTo{Variant}(fields)` | `(fields) => void` | Discriminated unions only — switches to a variant without repeating the discriminator (e.g. `switchToScroll({ delta: 5 })`) |
 
-**Record field extras** (for each `z.record(...)` field `tags`):
+**Record and Map field extras** (for each `z.record(...)` field or string-key `z.map(...)` field `tags`):
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `getTagsEntry(key)` | `(key: string) => V \| undefined` | Reads a single record entry |
+| `getTagsEntry(key)` | `(key: string) => V \| undefined` | Reads a single entry |
 | `setTagsEntry(key, value)` | `(key: string, value: V) => void` | Validates and patches a single entry (`/tags/{key}`) |
-| `deleteTagsEntry(key)` | `(key: string) => void` | Removes a record entry |
+| `deleteTagsEntry(key)` | `(key: string) => void` | Removes an entry |
 
 **Instance members:**
 
@@ -143,13 +143,15 @@ RFC 6902 operation emitted by [fast-json-patch](https://github.com/Starcounter-J
 ### Exported types
 
 - `Operation` — JSON Patch operation (re-export from `fast-json-patch`)
+- `SmartObjectSchema` — union of Zod schema types accepted by `SmartObject()`
+- `SmartObjectErrorCode` — `"InvalidValue"` \| `"InvalidUnionField"` \| `"InvalidReplay"` \| `"UnsupportedSchema"`
 - `SetMethods<T>` — mapped type of inferred `set*` methods for shape `T`
 - `SetMethodsUnion<T>` — `set*` methods for union root schemas
 - `AllKeys<T>` — all keys across union members
 - `UnionDataShape<U>` — flattened data shape for union roots
 - `VariantSwitchMethods<T>` — `switchVariant` for union roots
 - `DiscriminatedVariantSwitchMethods<T, D>` — `switchVariant` plus generated `switchTo*` methods
-- `RecordFieldMethods<T>` — dynamic entry accessors for `z.record` fields
+- `RecordFieldMethods<T>` — dynamic entry accessors for `z.record` and string-key `z.map` fields
 - `OperationsAccessor` — `operations` and `clearOperations()`
 - `SnapshotAccessor<T>` — `toJSON()`
 - `SmartObjectConstructor<T>` — constructor type including `fromOperations`
@@ -160,7 +162,7 @@ RFC 6902 operation emitted by [fast-json-patch](https://github.com/Starcounter-J
 - **Partial discriminator write** — Changing a discriminated union discriminator alone via `setType(...)` without providing the new variant fields throws `SmartObjectError`. Use `switchVariant(...)` or `switchTo{Variant}(...)` instead.
 - **Union field on wrong variant** — Setting a field that does not exist on the active variant throws `SmartObjectError`.
 - **Date fields** — `z.date()` and `z.coerce.date()` are supported; operations store ISO 8601 strings while getters return `Date` instances.
-- **Map, Set, and bigint** — `z.map` (string keys), `z.set`, and `z.bigint()` are supported with explicit codecs; operations use JSON-safe plain objects, arrays, and decimal strings respectively. Whole-field replace is used for Map/Set updates. Non-string map keys are not supported.
+- **Map, Set, and bigint** — `z.map` (string keys), `z.set`, and `z.bigint()` are supported with explicit codecs; operations use JSON-safe plain objects, arrays, and decimal strings respectively. String-key `z.map` fields also expose per-entry `get/set/delete*Entry` methods; whole-field `set*` is used for `z.set` and for map fields with non-string keys (not supported). Non-string map keys are not supported.
 - **Transforms** — `z.transform` / `z.pipe` with preprocessing work at runtime; operations store the **output** value after validation. TypeScript setter input types may not reflect transforms.
 
 ## Design rationale
@@ -177,6 +179,7 @@ RFC 6902 operation emitted by [fast-json-patch](https://github.com/Starcounter-J
 - [`examples/person.ts`](examples/person.ts) — primitives, nested objects, and arrays
 - [`examples/event.ts`](examples/event.ts) — discriminated union root
 - [`examples/profile.ts`](examples/profile.ts) — generic union root
+- [`examples/record.ts`](examples/record.ts) — `z.record` and string-key `z.map` entry API
 
 ## Project structure
 
@@ -194,7 +197,7 @@ smart-object/
 │       ├── instance-state.ts # WeakMap-backed instance storage
 │       ├── read-field.ts     # Defensive getter reads
 │       ├── json-patch.ts     # fast-json-patch wrapper + Date-safe deepClone
-│       ├── codecs.ts         # ISO 8601 serialization for date fields
+│       ├── codecs.ts         # JSON-safe codecs for Date, Map, Set, and bigint
 │       ├── apply-operations.ts # Replay and rollback
 │       ├── union-variant.ts  # Union variant matching
 │       ├── define-prototype.ts # Getter/setter prototype setup
@@ -206,7 +209,8 @@ smart-object/
 ├── examples/
 │   ├── person.ts
 │   ├── event.ts
-│   └── profile.ts
+│   ├── profile.ts
+│   └── record.ts
 ├── tests/
 │   ├── fixtures/
 │   │   ├── person.ts
@@ -228,6 +232,7 @@ smart-object/
 │   │   ├── schema-variants.test.ts
 │   │   ├── record-fields.test.ts
 │   │   ├── date-codec.test.ts
+│   │   ├── complex-schema-types.test.ts
 │   │   ├── intersection-lazy.test.ts
 │   │   └── types.test.ts
 │   └── zod-introspect.test.ts

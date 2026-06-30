@@ -24,9 +24,14 @@ profile.setAge(31);
 console.log("\nNo-op write (unchanged value):");
 console.log({ operations: profile.operations });
 
+profile.switchVariant({ name: "Mario", email: "mario@example.com" });
+
+console.log("\nAfter switchVariant to email variant:");
+console.log({ name: profile.name, email: profile.email, operations: profile.operations });
+
 profile.clearOperations();
 console.log("\nAfter clearOperations (state preserved, log empty):");
-console.log({ name: profile.name, age: profile.age, operations: profile.operations });
+console.log({ name: profile.name, email: profile.email, operations: profile.operations });
 
 const replayed = Profile.fromOperations(initial, [{ op: "replace", path: "/age", value: 31 }]);
 

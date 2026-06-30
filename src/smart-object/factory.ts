@@ -53,8 +53,8 @@ function assertBuildableSchema(schema: SmartObjectSchema): void {
  * Initial construction does not emit operations because that state is the baseline
  * every subsequent patch is measured against.
  *
- * @typeParam T - Zod object or union-of-objects schema that defines the instance shape
- * @param zodSchema - A `z.object({ ... })`, `z.union([...])`, or `z.discriminatedUnion(...)` schema
+ * @typeParam T - Zod schema that defines the instance shape (object, union, intersection, or lazy root)
+ * @param zodSchema - A `z.object({ ... })`, `z.union([...])`, `z.discriminatedUnion(...)`, `z.intersection(...)`, or `z.lazy(...)` schema
  * @returns An instantiable class with types inferred from the schema
  *
  * @example

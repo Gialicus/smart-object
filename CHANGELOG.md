@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Support for `z.date()` and `z.coerce.date()` with ISO 8601 operation values and `Date` getters
 - Support for `z.bigint()`, `z.map` (string keys), and `z.set` via explicit JSON-safe codecs
-- Per-entry API for `z.record` fields: `get{Field}Entry`, `set{Field}Entry`, `delete{Field}Entry`
+- Per-entry API for `z.record` and string-key `z.map` fields: `get{Field}Entry`, `set{Field}Entry`, `delete{Field}Entry`
 - Union variant switching: `switchVariant` and generated `switchTo{Variant}` for discriminated unions
 - Root schema variants: `z.intersection` and `z.lazy`
 - Zod schema introspection module (`src/zod-introspect.ts`) and codec layer (`src/smart-object/codecs.ts`)
